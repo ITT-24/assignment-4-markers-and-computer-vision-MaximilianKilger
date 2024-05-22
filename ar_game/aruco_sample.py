@@ -8,8 +8,9 @@ if len(sys.argv) > 1:
     video_id = int(sys.argv[1])
 
 # Define the ArUco dictionary and parameters
-aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
+aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_250)
 aruco_params = aruco.DetectorParameters()
+aruco_detector = aruco.ArucoDetector(aruco_dict, aruco_params)
 
 # Create a video capture object for the webcam
 cap = cv2.VideoCapture(video_id)
@@ -22,7 +23,7 @@ while True:
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     # Detect ArUco markers in the frame
-    corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=aruco_params)
+    corners, ids, rejectedImgPoints = aruco_detector.detectMarkers(gray)
 
     # Check if marker is detected
     if ids is not None:

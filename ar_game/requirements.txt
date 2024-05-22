@@ -1,0 +1,5 @@
+numpy
+pyglet
+opencv-python
+opencv-contrib-python
+PIL

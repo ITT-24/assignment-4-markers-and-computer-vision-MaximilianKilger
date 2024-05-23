@@ -7,12 +7,16 @@ from PIL import Image
 import random
 from threading import Thread
 import math
+import time
 
 
 WIDTH = 100
 HEIGHT = 100
 
-CAT_FILEPATH = os.path.join("assets", "cat.png")
+CAT_FILEPATHS = [os.path.join("assets", "cat.png"),
+                os.path.join("assets", "cat2.png"),
+                os.path.join("assets", "cat3.png"),
+                os.path.join("assets", "cat4.png")]
 TIGER_FILEPATH = os.path.join("assets", "tiger.png")
 
 video_id = 0
@@ -112,15 +116,19 @@ class GameManager ():
         self.cat_mode:str = "CAT"
         self.cursor_pos:tuple = (-1,-1)
         self.cursor_distance:int = 0
-        self.REQUIRED_CURSOR_DISTANCE:int = 200
+        self.REQUIRED_CURSOR_DISTANCE:int = 3000
         self.TIGER_PROVOCATION_DISTANCE:int = 0.25 * self.REQUIRED_CURSOR_DISTANCE
-        self.CAT_CHANCE = 0.8
+        self.CAT_CHANCE = 0.75
         self.status:str = "PRE_GAME"
         self.score:int = 0
         self.ui_setup = False
-        self.ROUND_LENGTH = 5
+        self.ROUND_LENGTH = 6
+        self.ROUND_LENGTH_ACCELERATION = 0.1
+        self.round_timer:float = 0
 
-        self.CAT_IMG = pyglet.image.load(CAT_FILEPATH)
+        self.CAT_IMGS = []
+        for fp in CAT_FILEPATHS:
+            self.CAT_IMGS.append(pyglet.image.load(fp))
         self.TIGER_IMG = pyglet.image.load(TIGER_FILEPATH)
         
     def init_ui (self):
@@ -131,71 +139,109 @@ class GameManager ():
 
         self.EMPTY_COLOR = (128,128,128, 255)
         self.FULL_COLOR = (222, 80, 84)
+        self.TIME_COLOR = (18, 220, 0)
 
-        self.CAT_WIDTH = window.width * 0.2
+        self.CAT_WIDTH = window.width * 0.5
         self.CAT_HEIGHT = self.CAT_WIDTH * 2
 
         self.CAT_UPPER_STOPPING_POINT = window.height - 100
         self.CAT_LOWER_STOPPING_POINT = -100
-        self.CAT_SPEED = 3
+        self.CAT_SPEED = 8
+
+        self.SCORE_LABEL_SIZE = 15
+        self.SCORE_LABEL_MARGIN = 20
+
+        self.SCORE_SIZE = 30
+        self.SCORE_COLOR = (0,0,192,255)
+
+        self.TIME_BAR_HEIGHT = 5
+        self.TIME_BAR_VERT_DISTANCE = 10
 
 
-        self.bar_background = pyglet.shapes.Rectangle((window.width - self.BAR_LENGTH)/2, window.height - (self.BAR_VERT_DISTANCE+self.BAR_HEIGHT), self.BAR_LENGTH, self.BAR_HEIGHT)
-        self.bar = pyglet.shapes.Rectangle((window.width - self.BAR_LENGTH)/2, self.BAR_VERT_DISTANCE+self.BAR_HEIGHT, 0, self.BAR_HEIGHT)
-        self.cat_sprite:pyglet.sprite.Sprite = pyglet.sprite.Sprite(self.CAT_IMG, (window.width-self.CAT_WIDTH) / 2, self.CAT_LOWER_STOPPING_POINT - self.CAT_HEIGHT, 0)
+        self.bar_background = pyglet.shapes.Rectangle((window.width - self.BAR_LENGTH)/2, window.height - (self.BAR_VERT_DISTANCE+self.BAR_HEIGHT), self.BAR_LENGTH, self.BAR_HEIGHT, color=self.EMPTY_COLOR)
+        self.bar = pyglet.shapes.Rectangle((window.width - self.BAR_LENGTH)/2, window.height-(self.BAR_VERT_DISTANCE+self.BAR_HEIGHT), 0, self.BAR_HEIGHT, color=self.FULL_COLOR)
+        self.time_bar_background = pyglet.shapes.Rectangle((window.width - self.BAR_LENGTH)/2, window.height - (self.BAR_VERT_DISTANCE+self.BAR_HEIGHT+self.TIME_BAR_VERT_DISTANCE+self.TIME_BAR_HEIGHT), self.BAR_LENGTH, self.TIME_BAR_HEIGHT, color=self.EMPTY_COLOR)
+        self.time_bar = pyglet.shapes.Rectangle((window.width - self.BAR_LENGTH)/2,  window.height - (self.BAR_VERT_DISTANCE+self.BAR_HEIGHT+self.TIME_BAR_VERT_DISTANCE+self.TIME_BAR_HEIGHT), 0, self.TIME_BAR_HEIGHT, color=self.TIME_COLOR)
+        self.cat_sprite:pyglet.sprite.Sprite = pyglet.sprite.Sprite(self.CAT_IMGS[0], (window.width-self.CAT_WIDTH) / 2, self.CAT_LOWER_STOPPING_POINT - self.CAT_HEIGHT, 0)
         self.cat_sprite.height = self.CAT_HEIGHT
         self.cat_sprite.width = self.CAT_WIDTH
+        
 
-    def update_ui(self):
-        print(self.status)
+        self.score_text_label = pyglet.text.Label("SCORE", "Arial", self.SCORE_LABEL_SIZE,color=self.SCORE_COLOR, x=self.SCORE_LABEL_MARGIN, y=window.height-self.SCORE_LABEL_MARGIN)
+        self.score_label = pyglet.text.Label("", "Arial", self.SCORE_SIZE, bold=True, color=self.SCORE_COLOR, x=self.SCORE_LABEL_MARGIN, y = window.height - (2*self.SCORE_LABEL_MARGIN+self.SCORE_LABEL_SIZE))
+
+    def update(self):
+        #print(self.status)
         if self.ui_setup:
             self.bar.width = min(self.cursor_distance/self.REQUIRED_CURSOR_DISTANCE, 1) * self.BAR_LENGTH
-
+            self.time_bar.width = min(self.round_timer/self.ROUND_LENGTH, 1) * self.BAR_LENGTH
+            self.score_label.text = str(self.score)
+            if self.status == "PRE_GAME":
+                self.status = "RAISING"
             if self.status == "RAISING":
-                projected_y_pos = self.cat_sprite.y + self.CAT_SPEED()
+                projected_y_pos = self.cat_sprite.y + self.CAT_SPEED
                 if projected_y_pos + self.cat_sprite.height >= self.CAT_UPPER_STOPPING_POINT:
-                    self.cat_sprite.y = min(projected_y_pos+self.cat_sprite.height, self.CAT_UPPER_STOPPING_POINT)
+                    self.cat_sprite.y = min(projected_y_pos, self.CAT_UPPER_STOPPING_POINT-self.cat_sprite.height)
+                    self.round_timer = 0
+                    self.delta_time = time.time()
                     self.status = 'ACTIVE'
-                    pyglet.clock.schedule_once(self.resolve_round, self.ROUND_LENGTH)
+                    #pyglet.clock.schedule_once(self.resolve_round, self.ROUND_LENGTH)
+                else:
+                    self.cat_sprite.y = projected_y_pos
             if self.status == "ACTIVE":
+                print(f"{self.cursor_distance}")
+                now = time.time()
+                self.round_timer += now-self.delta_time
+                self.delta_time = now
                 if self.cat_mode == "CAT":
                     if self.cursor_distance >= self.REQUIRED_CURSOR_DISTANCE:
                         self.resolve_round()
-                        pyglet.clock.unschedule(self.resolve_round)
+                        return
+                        #pyglet.clock.unschedule(self.resolve_round)
                 elif self.cat_mode == "TIGER":
                     if self.cursor_distance >= self.TIGER_PROVOCATION_DISTANCE:
                         self.resolve_round()
-                        pyglet.clock.unschedule(self.resolve_round)
+                        return
+                        #pyglet.clock.unschedule(self.resolve_round)
+                if self.round_timer >= self.ROUND_LENGTH:
+                    self.resolve_round()
+                
+                
             if self.status == "LOWERING":
-                projected_y_pos = self.cat_sprite.y + self.CAT_SPEED()
+                projected_y_pos = self.cat_sprite.y - self.CAT_SPEED
                 if projected_y_pos + self.cat_sprite.height <= self.CAT_LOWER_STOPPING_POINT:
-                    self.cat_sprite.y = max(projected_y_pos+self.cat_sprite.height, self.CAT_LOWER_STOPPING_POINT)
+                    self.cat_sprite.y = max(projected_y_pos, self.CAT_LOWER_STOPPING_POINT-self.cat_sprite.height)
                     self.choose_cat()
                     self.status = 'RAISING'
-            if self.status == "PRE_GAME":
-                self.status == "RAISING"
+                else:
+                    self.cat_sprite.y = projected_y_pos
 
             
     def choose_cat(self):
-        if random.random() <= self.cat_chance:
+        if random.random() <= self.CAT_CHANCE:
             self.cat_mode = "CAT"
+            cat_index = random.randrange(0,len(self.CAT_IMGS))
+            self.cat_sprite.image = self.CAT_IMGS[cat_index]
+            self.cat_sprite.width = self.CAT_WIDTH
+            self.cat_sprite.height = self.CAT_HEIGHT
         else:
             self.cat_mode = "TIGER"
+            self.cat_sprite.image = self.TIGER_IMG
+            self.cat_sprite.width = self.CAT_WIDTH
+            self.cat_sprite.height = self.CAT_HEIGHT
 
-    def resolve_round(self):
+    def resolve_round(self, dt=None):
         if self.status == 'ACTIVE':
             if self.cat_mode == "CAT":
                 if self.cursor_distance >= self.REQUIRED_CURSOR_DISTANCE:
                     self.score += 1
+                    self.ROUND_LENGTH -= self.ROUND_LENGTH_ACCELERATION
             elif self.cat_mode == "TIGER":
                 if self.cursor_distance >= self.TIGER_PROVOCATION_DISTANCE:
                     self.score -= 1
             self.cursor_distance = 0
             self.status = "LOWERING"
-                
-
-            
-        
+            self.round_timer = 0
 
     def update_cursor_position(self, new_pos:tuple):
         if new_pos is None:
@@ -227,6 +273,11 @@ class GameManager ():
                 self.cat_sprite.draw()
             self.bar_background.draw()
             self.bar.draw()
+            self.time_bar_background.draw()
+            self.time_bar.draw()
+            self.score_text_label.draw()
+            self.score_label.draw()
+
 
 window = pyglet.window.Window(WIDTH, HEIGHT)
 gameManager = GameManager()
@@ -241,7 +292,7 @@ def on_draw():
     if window.height != HEIGHT or window.width != WIDTH:
         window.set_size(WIDTH, HEIGHT)
         gameManager.init_ui()
-    gameManager.update_ui()
+    gameManager.update()
     window.clear()
     IMG.blit(0,0,0)
     gameManager.render()
@@ -272,6 +323,7 @@ def main_loop():
             IMG = cv2glet(result_img,"BGR")
             if not hand_position is None:
                 marker_pos = hand_position
+                gameManager.update_cursor_position(hand_position)
 
 img_read_thread = Thread(target=main_loop)
 img_read_thread.start()

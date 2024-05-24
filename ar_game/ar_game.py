@@ -20,6 +20,9 @@ CAT_FILEPATHS = [os.path.join("assets", "cat.png"),
 TIGER_FILEPATH = os.path.join("assets", "tiger.png")
 HAND_FILEPATH = os.path.join("assets", "hand.png")
 
+ROAR_FILEPATH = os.path.join("assets", "roar.mp3")
+MEOW_FILEPATH = os.path.join("assets", "meow.mp3")
+
 # computer vision parameters. If you are having trouble with detection in your current environment, playing around with these might help.
 SATURATION_THRESH = 38
 BLUR_RADIUS = 9
@@ -144,6 +147,9 @@ class GameManager ():
             self.CAT_IMGS.append(pyglet.image.load(fp))
         self.TIGER_IMG = pyglet.image.load(TIGER_FILEPATH)
         self.HAND_IMG = pyglet.image.load(HAND_FILEPATH)
+
+        self.CAT_SOUND = pyglet.media.load(MEOW_FILEPATH)
+        self.TIGER_SOUND = pyglet.media.load(ROAR_FILEPATH)
         
     def init_ui (self):
         self.ui_setup = True
@@ -213,7 +219,6 @@ class GameManager ():
                 else:
                     self.cat_sprite.y = projected_y_pos
             if self.status == "ACTIVE":
-                print(f"{self.cursor_distance}")
                 now = time.time()
                 self.round_timer += now-self.delta_time
                 self.delta_time = now
@@ -241,6 +246,7 @@ class GameManager ():
                     self.cat_sprite.y = projected_y_pos
     
     def game_over(self):
+        self.TIGER_SOUND.play()
         self.status = "GAME_OVER"
         self.score_text_label.text="GAME OVER"
         self.score_label.text = ":("
@@ -250,6 +256,7 @@ class GameManager ():
         self.round_timer = 0
         self.cursor_distance = 0
         self.score = 0
+        self.score_text_label.text="SCORE"
         self.cat_sprite.y = self.CAT_LOWER_STOPPING_POINT - self.CAT_HEIGHT
         self.round_length = self.DEFAULT_ROUND_LENGTH
         self.choose_cat()
@@ -276,6 +283,7 @@ class GameManager ():
             if self.cat_mode == "CAT":
                 if self.cursor_distance >= self.REQUIRED_CURSOR_DISTANCE:
                     self.score += 1
+                    self.CAT_SOUND.play()
                     self.round_length -= self.ROUND_LENGTH_ACCELERATION
             self.cursor_distance = 0
             self.status = "LOWERING"

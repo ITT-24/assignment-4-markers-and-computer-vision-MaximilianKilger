@@ -18,6 +18,13 @@ CAT_FILEPATHS = [os.path.join("assets", "cat.png"),
                 os.path.join("assets", "cat3.png"),
                 os.path.join("assets", "cat4.png")]
 TIGER_FILEPATH = os.path.join("assets", "tiger.png")
+HAND_FILEPATH = os.path.join("assets", "hand.png")
+
+# computer vision parameters. If you are having trouble with detection in your current environment, playing around with these might help.
+SATURATION_THRESH = 38
+BLUR_RADIUS = 9
+MIN_HAND_POINT_DISTANCE = 0.085
+
 
 video_id = 0
 
@@ -36,7 +43,7 @@ area_corners = np.array([[-1,-1],
                          [-1,-1],
                          [-1,-1]]) # dummy points for homography
 
-def extract_area (frame:np.array, area_corners:np.array ):
+def extract_area (frame:np.array, area_corners:np.array )->tuple[bool,np.array]:
     WIDTH = frame.shape[1]
     HEIGHT = frame.shape[0]
     big_img_cornerpoints = np.array([[0     , 0],
@@ -60,6 +67,7 @@ def extract_area (frame:np.array, area_corners:np.array ):
                 area_corners[i] = corner[0][(i+2)%4]
 
     if not -1 in area_corners:
+        # correct image
         homography, ret = cv2.findHomography(area_corners,big_img_cornerpoints)
         result_img = cv2.warpPerspective(frame, homography, (WIDTH, HEIGHT))
         return True,result_img
@@ -74,22 +82,25 @@ def get_center_of_hand(frame:np.array):
     h = hsv[:,:,0]
     s = hsv[:,:,1]
     v = hsv[:,:,2]
-    s = cv2.GaussianBlur(s, (11,11), 0)
-    ret, s_thresh = cv2.threshold(s, 38, 255, cv2.THRESH_BINARY)
-    #contours, hierarchy = cv2.findContours(s_thresh, 1, 2)
-    dist = cv2.distanceTransform(s_thresh,cv2.DIST_L2,5)
-    max_dist = np.max(dist)
-    index = None
-    if max_dist > WIDTH*0.085:
-        index  = np.unravel_index(dist.argmax(), dist.shape)[::-1]
-    dist = cv2.cvtColor(dist, cv2.COLOR_GRAY2BGR)
-    
-    cv2.normalize(dist, dist, 0, 1.0, cv2.NORM_MINMAX)
-    #if not index is None:
-    #    dist = cv2.circle(dist, index, 15, (0,0,255))
+    s = cv2.GaussianBlur(s, (BLUR_RADIUS,BLUR_RADIUS), 0)
+    ret, s_thresh = cv2.threshold(s, SATURATION_THRESH, 255, cv2.THRESH_BINARY)
+    if ret:
+        #contours, hierarchy = cv2.findContours(s_thresh, 1, 2)
+        dist = cv2.distanceTransform(s_thresh,cv2.DIST_L2,5)
+        max_dist = np.max(dist)
+        index = None
+        if max_dist > WIDTH*MIN_HAND_POINT_DISTANCE:
+            index  = np.unravel_index(dist.argmax(), dist.shape)[::-1]
+        #dist = cv2.cvtColor(dist, cv2.COLOR_GRAY2BGR)
         
-    #cv2.imshow("ASDF", dist)
-    return index
+        #cv2.normalize(dist, dist, 0, 1.0, cv2.NORM_MINMAX)
+        #if not index is None:
+        #    dist = cv2.circle(dist, index, 15, (0,0,255))
+            
+        #cv2.imshow("ASDF", dist)
+        return index
+    else:
+        return None
 
 # code von Andi oder Tina
 def cv2glet(img,fmt):
@@ -117,19 +128,22 @@ class GameManager ():
         self.cursor_pos:tuple = (-1,-1)
         self.cursor_distance:int = 0
         self.REQUIRED_CURSOR_DISTANCE:int = 3000
-        self.TIGER_PROVOCATION_DISTANCE:int = 0.25 * self.REQUIRED_CURSOR_DISTANCE
+        self.TIGER_PROVOCATION_DISTANCE:int = 0.2 * self.REQUIRED_CURSOR_DISTANCE
         self.CAT_CHANCE = 0.75
         self.status:str = "PRE_GAME"
         self.score:int = 0
         self.ui_setup = False
-        self.ROUND_LENGTH = 6
+        self.DEFAULT_ROUND_LENGTH = 6
+        self.round_length = 6
         self.ROUND_LENGTH_ACCELERATION = 0.1
         self.round_timer:float = 0
+        self.GAME_OVER_TIME = 5
 
         self.CAT_IMGS = []
         for fp in CAT_FILEPATHS:
             self.CAT_IMGS.append(pyglet.image.load(fp))
         self.TIGER_IMG = pyglet.image.load(TIGER_FILEPATH)
+        self.HAND_IMG = pyglet.image.load(HAND_FILEPATH)
         
     def init_ui (self):
         self.ui_setup = True
@@ -146,7 +160,7 @@ class GameManager ():
 
         self.CAT_UPPER_STOPPING_POINT = window.height - 100
         self.CAT_LOWER_STOPPING_POINT = -100
-        self.CAT_SPEED = 8
+        self.CAT_SPEED = 10
 
         self.SCORE_LABEL_SIZE = 15
         self.SCORE_LABEL_MARGIN = 20
@@ -157,6 +171,8 @@ class GameManager ():
         self.TIME_BAR_HEIGHT = 5
         self.TIME_BAR_VERT_DISTANCE = 10
 
+        self.HAND_WIDTH = 256
+
 
         self.bar_background = pyglet.shapes.Rectangle((window.width - self.BAR_LENGTH)/2, window.height - (self.BAR_VERT_DISTANCE+self.BAR_HEIGHT), self.BAR_LENGTH, self.BAR_HEIGHT, color=self.EMPTY_COLOR)
         self.bar = pyglet.shapes.Rectangle((window.width - self.BAR_LENGTH)/2, window.height-(self.BAR_VERT_DISTANCE+self.BAR_HEIGHT), 0, self.BAR_HEIGHT, color=self.FULL_COLOR)
@@ -166,6 +182,10 @@ class GameManager ():
         self.cat_sprite.height = self.CAT_HEIGHT
         self.cat_sprite.width = self.CAT_WIDTH
         
+        self.hand_sprite:pyglet.sprite.Sprite = pyglet.sprite.Sprite(self.HAND_IMG, x=-2000, y=-2000)
+        self.hand_sprite.height = self.HAND_WIDTH
+        self.hand_sprite.width = self.HAND_WIDTH
+        self.hand_sprite
 
         self.score_text_label = pyglet.text.Label("SCORE", "Arial", self.SCORE_LABEL_SIZE,color=self.SCORE_COLOR, x=self.SCORE_LABEL_MARGIN, y=window.height-self.SCORE_LABEL_MARGIN)
         self.score_label = pyglet.text.Label("", "Arial", self.SCORE_SIZE, bold=True, color=self.SCORE_COLOR, x=self.SCORE_LABEL_MARGIN, y = window.height - (2*self.SCORE_LABEL_MARGIN+self.SCORE_LABEL_SIZE))
@@ -173,9 +193,13 @@ class GameManager ():
     def update(self):
         #print(self.status)
         if self.ui_setup:
-            self.bar.width = min(self.cursor_distance/self.REQUIRED_CURSOR_DISTANCE, 1) * self.BAR_LENGTH
-            self.time_bar.width = min(self.round_timer/self.ROUND_LENGTH, 1) * self.BAR_LENGTH
-            self.score_label.text = str(self.score)
+            cursor_x, cursor_y = self.cursor_pos
+            self.hand_sprite.x = cursor_x - self.HAND_WIDTH/2
+            self.hand_sprite.y = window.height-(cursor_y + self.HAND_WIDTH/2)
+            if self.status != "GAME_OVER":
+                self.bar.width = min(self.cursor_distance/self.REQUIRED_CURSOR_DISTANCE, 1) * self.BAR_LENGTH
+                self.time_bar.width = min(self.round_timer/self.round_length, 1) * self.BAR_LENGTH
+                self.score_label.text = str(self.score)
             if self.status == "PRE_GAME":
                 self.status = "RAISING"
             if self.status == "RAISING":
@@ -185,7 +209,7 @@ class GameManager ():
                     self.round_timer = 0
                     self.delta_time = time.time()
                     self.status = 'ACTIVE'
-                    #pyglet.clock.schedule_once(self.resolve_round, self.ROUND_LENGTH)
+                    #pyglet.clock.schedule_once(self.resolve_round, self.round_length)
                 else:
                     self.cat_sprite.y = projected_y_pos
             if self.status == "ACTIVE":
@@ -200,10 +224,10 @@ class GameManager ():
                         #pyglet.clock.unschedule(self.resolve_round)
                 elif self.cat_mode == "TIGER":
                     if self.cursor_distance >= self.TIGER_PROVOCATION_DISTANCE:
-                        self.resolve_round()
+                        self.game_over()
                         return
                         #pyglet.clock.unschedule(self.resolve_round)
-                if self.round_timer >= self.ROUND_LENGTH:
+                if self.round_timer >= self.round_length:
                     self.resolve_round()
                 
                 
@@ -215,6 +239,23 @@ class GameManager ():
                     self.status = 'RAISING'
                 else:
                     self.cat_sprite.y = projected_y_pos
+    
+    def game_over(self):
+        self.status = "GAME_OVER"
+        self.score_text_label.text="GAME OVER"
+        self.score_label.text = ":("
+        pyglet.clock.schedule_once(self.reset, self.GAME_OVER_TIME)
+
+    def reset(self, dt=0):
+        self.round_timer = 0
+        self.cursor_distance = 0
+        self.score = 0
+        self.cat_sprite.y = self.CAT_LOWER_STOPPING_POINT - self.CAT_HEIGHT
+        self.round_length = self.DEFAULT_ROUND_LENGTH
+        self.choose_cat()
+        self.status = "RAISING"
+
+
 
             
     def choose_cat(self):
@@ -235,10 +276,7 @@ class GameManager ():
             if self.cat_mode == "CAT":
                 if self.cursor_distance >= self.REQUIRED_CURSOR_DISTANCE:
                     self.score += 1
-                    self.ROUND_LENGTH -= self.ROUND_LENGTH_ACCELERATION
-            elif self.cat_mode == "TIGER":
-                if self.cursor_distance >= self.TIGER_PROVOCATION_DISTANCE:
-                    self.score -= 1
+                    self.round_length -= self.ROUND_LENGTH_ACCELERATION
             self.cursor_distance = 0
             self.status = "LOWERING"
             self.round_timer = 0
@@ -271,6 +309,7 @@ class GameManager ():
         if self.ui_setup:
             if not self.cat_sprite is None:
                 self.cat_sprite.draw()
+            self.hand_sprite.draw()
             self.bar_background.draw()
             self.bar.draw()
             self.time_bar_background.draw()
@@ -296,9 +335,6 @@ def on_draw():
     window.clear()
     IMG.blit(0,0,0)
     gameManager.render()
-    marker.x = marker_pos[0]
-    marker.y = HEIGHT-marker_pos[1]
-    marker.draw()
 
 @window.event
 def on_key_press(symbol, modifiers):
